@@ -154,6 +154,7 @@ class StableDiffusion:
         self.te_torch_dtype = get_torch_dtype(model_config.te_dtype)
 
         self.model_config = model_config
+        self._loaded_inference_adapters: List[str] = []
         self.prediction_type = "v_prediction" if self.model_config.is_v_pred else "epsilon"
         self.arch = model_config.arch
 
@@ -259,6 +260,33 @@ class StableDiffusion:
             divisibility = divisibility * 2
         return divisibility
         
+    def _load_inference_loras(self, pipe: StableDiffusionPipeline):
+        self._loaded_inference_adapters.clear()
+        paths = self.model_config.inference_lora_paths or []
+        for idx, path in enumerate(paths):
+            if not path:
+                continue  # allow null placeholders
+            name = f"inf_{idx}"
+            pipe.load_lora_weights(path, adapter_name=name)
+            self._loaded_inference_adapters.append(name)
+        if self._loaded_inference_adapters:
+            adapter_weights = []
+            for i in range(len(self._loaded_inference_adapters)):
+                if i == 0:
+                    adapter_weights.append(1.1)
+                elif i == 1:
+                    adapter_weights.append(1.0)
+                else:
+                    adapter_weights.append(0.5)
+            pipe.set_adapters(
+                self._loaded_inference_adapters,
+                adapter_weights,
+            )
+
+    def _unload_inference_loras(self, pipe: StableDiffusionPipeline):
+        for name in self._loaded_inference_adapters:
+            pipe.unload_lora_weights(name)
+        self._loaded_inference_adapters.clear()
 
     def load_model(self):
         if self.is_loaded:
@@ -1108,7 +1136,9 @@ class StableDiffusion:
             sampler=None,
             pipeline: Union[None, StableDiffusionPipeline, StableDiffusionXLPipeline] = None,
     ):
-        network = unwrap_model(self.network)
+        network = None
+        if self.network is not None:
+            network = unwrap_model(self.network)
         merge_multiplier = 1.0
         flush()
         # if using assistant, unfuse it
@@ -1314,6 +1344,10 @@ class StableDiffusion:
 
             if sampler.startswith("sample_"):
                 pipeline.set_scheduler(sampler)
+            
+            # Load multiple LoRAs if available
+            if hasattr(self.model_config, 'inference_lora_paths') and self.model_config.inference_lora_paths:
+                self._load_inference_loras(pipeline)
 
         refiner_pipeline = None
         if self.refiner_unet:
@@ -1687,6 +1721,11 @@ class StableDiffusion:
                     self.adapter.clear_memory()
 
         # clear pipeline and cache to reduce vram usage
+        # Clean up LoRAs
+        if hasattr(self.model_config, 'inference_lora_paths') and self.model_config.inference_lora_paths:
+            if pipeline is not None:
+                self._unload_inference_loras(pipeline)
+
         del pipeline
         if refiner_pipeline is not None:
             del refiner_pipeline
@@ -1705,7 +1744,7 @@ class StableDiffusion:
         self.unet.to(self.device_torch, dtype=self.torch_dtype)
         if network.is_merged_in:
             network.merge_out(merge_multiplier)
-        # self.tokenizer.to(original_device_dict['tokenizer'])
+            
 
         # refuse loras
         if self.model_config.assistant_lora_path is not None:
