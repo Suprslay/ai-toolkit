@@ -22,12 +22,12 @@ generate:
   # Face inpainting configuration
   upper_body_inpainting: false
   face_inpainting: true
-  face_prompt: "SLAY1MNSHA a woman, smooth skin, make-up, model, fashion"
+  face_prompt: "slaymnsha bslaymnsha a woman, smooth skin, make-up, model, fashion"
 
   prompts:
-    - "SLAY1MNSHA A woman, High fashion editorial. She is wearing a red party dress. front pose. Body facing the viewer. The background is a plain, light off-white color, creating a simple, clean studio setting. The lighting is soft, natural-looking, and diffused, full-body"
-    - "SLAY1MNSHA A woman, High fashion editorial. She is wearing a blue shirt and party jeans and red sneakers. front pose. Body facing the viewer. The background is a plain, light off-white color, creating a simple, clean studio setting. The lighting is soft, natural-looking, and diffused, full-body"
-    - "SLAY1MNSHA A woman, High fashion editorial. She is wearing a green loose zara pullover and a short skirt and green long strip heel sandal. front pose. Body facing the viewer. The background is a plain, light off-white color, creating a simple, clean studio setting. The lighting is soft, natural-looking, and diffused, full-body"
+    - "slaymnsha bslaymnsha A woman, High fashion editorial. She is wearing a red party dress. front pose. Body facing the viewer. The background is a plain, light off-white color, creating a simple, clean studio setting. The lighting is soft, natural-looking, and diffused, full body"
+    - "slaymnsha bslaymnsha A woman, High fashion editorial. She is wearing a blue shirt and party jeans and red sneakers. front pose. Body facing the viewer. The background is a plain, light off-white color, creating a simple, clean studio setting. The lighting is soft, natural-looking, and diffused, full body"
+    - "slaymnsha bslaymnsha A woman, High fashion editorial. She is wearing a green loose zara pullover and a short skirt and green long strip heel sandal. front pose. Body facing the viewer. The background is a plain, light off-white color, creating a simple, clean studio setting. The lighting is soft, natural-looking, and diffused, full body"
     
 model:
   name_or_path: "black-forest-labs/FLUX.1-dev"
@@ -37,6 +37,7 @@ model:
   is_flux: true
   low_vram: false
   inference_lora_paths:
+    - "output/bslaymnsha_v1/bslaymnsha_v1.safetensors"
     - "/workspace/loras/my_first_lora_v1_000001000.safetensors"
     - "/workspace/loras/mjV6.safetensors"
-  inference_lora_strengths: [ 1.0, 0.1 ] # Corresponding strengths for each LoRA
+  inference_lora_strengths: [ 1.0, 1.0, 0.1 ] # Corresponding strengths for each LoRA
