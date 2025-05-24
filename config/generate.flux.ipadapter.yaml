@@ -1,0 +1,64 @@
+model:
+  name_or_path: "black-forest-labs/FLUX.1-dev"
+  device: "cuda"
+  dtype: "float16"
+  low_vram: false
+  
+  # Character LoRAs for consistent identity
+  inference_lora_paths:
+    - "/workspace/loras/my_first_lora_v1_000001000.safetensors"
+    - "/workspace/loras/mjV6.safetensors"
+  inference_lora_strengths:
+    - 1.0
+    - 0.1
+
+# IP-Adapter configuration with dual reference strategy
+ip_adapter:
+  model_path: "XLabs-AI/flux-ip-adapter-v2"
+  
+  # Dual reference approach: flat lay + worn examples
+  # This gives the model both garment shape/details AND how it looks when worn
+  reference_images:
+    # Garment flat lay images (for precise garment details, colors, patterns)
+    - "datasets/garments/extra_image_4.jpg"
+    
+  
+  # Scales optimized for flat lay + worn combination
+  scales:
+    # Flat lay images: Higher influence for garment details
+    - 1.0  # Dress flat lay - strong for pattern/color details
+    
+  
+  # Optimal size for garment detail preservation
+  target_size: [768, 768]  # Larger than default for better garment details
+
+generate:
+  output_dir: "outputs/ipadapter"
+  sampler: "flowmatch" # ignored for now, flow match will be used by default
+  
+  # Prompts optimized for garment + character combination
+  prompts:
+    # Elegant dress combinations
+    - "SLAY1MNSHA A woman, High fashion editorial. front pose. Body facing the viewer. The background is a plain, light off-white color, creating a simple, clean studio setting. The lighting is soft, natural-looking, and diffused, full body"
+  
+  # Negative prompt optimized for garment quality
+  negative_prompt: "ugly, bad anatomy, blurry, low quality, distorted clothes, ill-fitting garments, wrinkled fabric, poor draping, mismatched proportions, deformed clothing, cartoon, anime, painting, sketch"
+  
+  # Generation settings optimized for garment detail
+  width: 1024
+  height: 1024
+  sample_steps: 32 
+  guidance_scale: 8  # Optimal for Flux
+  num_images: 2  # Generate variations for selection
+  seed: 42
+  ext: ".png"
+  
+  # Face inpainting for character consistency
+  face_inpainting: true
+  face_lora_paths:
+    - "/workspace/loras/my_first_lora_v1_000001000.safetensors"
+    - "/workspace/loras/mjV6.safetensors"
+
+  
+  # Optional: Upper body enhancement for complete portrait quality
+  upper_body_inpainting: false  # Disabled to focus on garment integration

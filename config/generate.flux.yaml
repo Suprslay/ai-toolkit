@@ -22,22 +22,20 @@ generate:
   # Face inpainting configuration
   upper_body_inpainting: false
   face_inpainting: true
-  face_prompt: "slaymnsha bslaymnsha a woman, smooth skin, make-up, model, fashion"
+  face_prompt: "A woman, smooth skin, make-up, model, fashion"
 
   prompts:
-    - "slaymnsha bslaymnsha A woman, High fashion editorial. She is wearing a red party dress. front pose. Body facing the viewer. The background is a plain, light off-white color, creating a simple, clean studio setting. The lighting is soft, natural-looking, and diffused, full body"
-    - "slaymnsha bslaymnsha A woman, High fashion editorial. She is wearing a blue shirt and party jeans and red sneakers. front pose. Body facing the viewer. The background is a plain, light off-white color, creating a simple, clean studio setting. The lighting is soft, natural-looking, and diffused, full body"
-    - "slaymnsha bslaymnsha A woman, High fashion editorial. She is wearing a green loose zara pullover and a short skirt and green long strip heel sandal. front pose. Body facing the viewer. The background is a plain, light off-white color, creating a simple, clean studio setting. The lighting is soft, natural-looking, and diffused, full body"
+    - "Professional fashion photography of a black two-piece swimsuit set consisting of a strapless bandeau top and high-waisted bottoms, styled with black pointed-toe flats, full body shot against a neutral gray backdrop, clean minimalist studio lighting, fashion catalog style, standing pose with arms at sides, full body"
     
 model:
   name_or_path: "black-forest-labs/FLUX.1-dev"
   quantize: false # Whether to quantize the model weights
   quantize_te: false # Whether to quantize the text encoder
   arch: "flux"
-  is_flux: true
-  low_vram: false
+  is_flux: false
+  low_vram: true
   inference_lora_paths:
-    - "output/bslaymnsha_v1/bslaymnsha_v1.safetensors"
     - "/workspace/loras/my_first_lora_v1_000001000.safetensors"
+    - "output/bslaymnsha_v1/bslaymnsha_v1_000000750.safetensors"
     - "/workspace/loras/mjV6.safetensors"
-  inference_lora_strengths: [ 1.0, 1.0, 0.1 ] # Corresponding strengths for each LoRA
+  inference_lora_strengths: [ 1.0, 0.75, 0.1 ] # Corresponding strengths for each LoRA
