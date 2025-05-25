@@ -20,8 +20,8 @@ RUN apt-get update && apt-get install -y \
 # Copy requirements file
 COPY requirements.txt /workspace/requirements.txt
 
-# Install Python dependencies
-RUN uv pip install --upgrade -r /workspace/requirements.txt --no-cache-dir --system
+# Install Python dependencies using pip (uv not available in runtime image)
+RUN pip install --upgrade -r /workspace/requirements.txt --no-cache-dir
 
 # Copy the entire toolkit and configuration
 COPY . /workspace/
@@ -32,8 +32,12 @@ RUN mkdir -p /workspace/config
 # Copy the config file specifically (adjust path as needed)
 COPY config/train_flux.yaml /workspace/config/train_flux.yaml
 
-# Copy handler file
+# Copy startup script and handler
+COPY start.sh /workspace/start.sh
 COPY handler.py /workspace/handler.py
+
+# Make startup script executable
+RUN chmod +x /workspace/start.sh
 
 # Set environment variables
 ENV HF_HUB_ENABLE_HF_TRANSFER=1
@@ -42,15 +46,7 @@ ENV PYTHONPATH=/workspace
 
 # Hugging Face authentication
 # The HF_TOKEN will be set at runtime via RunPod template
-ENV HF_TOKEN=${HF_TOKEN}
-
-# Perform Hugging Face login if token is provided
-RUN if [ -n "$HF_TOKEN" ]; then \
-        echo "Logging into Hugging Face..." && \
-        huggingface-cli login --token $HF_TOKEN; \
-    else \
-        echo "No HF_TOKEN provided - skipping Hugging Face login"; \
-    fi
+# Only perform login at runtime if token is available
 
 # AWS S3 Configuration (optional - can be set at runtime)
 # ENV AWS_ACCESS_KEY_ID=your_access_key_here
@@ -63,5 +59,5 @@ RUN mkdir -p /workspace/datasets/input
 # Set permissions
 RUN chmod +x /workspace/handler.py
 
-# Run the handler
-CMD ["python", "-u", "/workspace/handler.py"]
+# Run the startup script instead of handler directly
+CMD ["/workspace/start.sh"]
