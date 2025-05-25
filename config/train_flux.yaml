@@ -13,8 +13,8 @@ config:
       trigger_word: "slaymnsha"
       network:
         type: "lora"
-        linear: 8
-        linear_alpha: 8
+        linear: 16
+        linear_alpha: 16
       save:
         dtype: float16 # precision to save
         save_every: 1000 # save every this many steps
@@ -41,7 +41,7 @@ config:
         gradient_accumulation_steps: 1
         train_unet: true
         train_text_encoder: false  # probably won't work with flux
-        gradient_checkpointing: true  # need the on unless you have a ton of vram
+        gradient_checkpointing: false  # need the on unless you have a ton of vram
         noise_scheduler: "flowmatch" # for training only
         optimizer: "adamw8bit"
         lr: 1e-4
@@ -54,7 +54,7 @@ config:
 
         # ema will smooth out learning, but could slow it down. Recommended to leave on.
         ema_config:
-          use_ema: true
+          use_ema: false
           ema_decay: 0.99
 
         # will probably need this if gpu supports it for flux, other dtypes may not work correctly
