@@ -1,4 +1,4 @@
-FROM runpod/pytorch:2.2.0-py3.10-cuda12.1.1-runtime-ubuntu22.04
+FROM runpod/pytorch:2.2.0-py3.10-cuda12.1.1-devel-ubuntu22.04
 
 # Set python3.10 as the default python (already available in this image)
 RUN ln -sf $(which python3.10) /usr/local/bin/python && \
