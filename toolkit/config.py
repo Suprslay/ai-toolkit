@@ -45,6 +45,9 @@ def preprocess_config(config: OrderedDict, name: str = None):
     # we need to replace tags. For now just [name]
     if name is None:
         name = config["config"]["name"]
+    
+    if "name" not in config["config"] and name is not None:
+        config["config"]["name"]=name
     config_string = json.dumps(config)
     config_string = config_string.replace("[name]", name)
     config = json.loads(config_string, object_pairs_hook=OrderedDict)
