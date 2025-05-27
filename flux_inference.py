@@ -251,14 +251,9 @@ class FluxInference:
         if self.ip_adapter_enabled:
             print("[Load] Loading IP-Adapter components …")
             try:
-                image_encoder = CLIPVisionModelWithProjection.from_pretrained(
-                        "openai/clip-vit-large-patch14",  # or "openai/clip-vit-base-patch32"
-                        torch_dtype=self.torch_dtype
-                )
+                image_encoder = None
                 # Load feature extractor from CLIP model
-                feature_extractor = CLIPImageProcessor.from_pretrained(
-                        "openai/clip-vit-large-patch14"  # Match the image encoder
-                )
+                feature_extractor = None
                 
                 print("[Load] IP-Adapter components loaded successfully")
             except Exception as e:
@@ -325,7 +320,6 @@ class FluxInference:
             # Load IP-Adapter
             self.pipeline.load_ip_adapter(
                 self.ip_adapter_model_path,
-                subfolder="",
                 weight_name="ip_adapter.safetensors"  # Adjust filename as needed
             )
             

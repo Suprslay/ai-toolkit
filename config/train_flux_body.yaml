@@ -13,8 +13,8 @@ config:
       trigger_word: "slaymnsha"
       network:
         type: "lora"
-        linear: 16
-        linear_alpha: 16
+        linear: 32
+        linear_alpha: 32
       save:
         dtype: float16 # precision to save
         save_every: 1000 # save every this many steps
