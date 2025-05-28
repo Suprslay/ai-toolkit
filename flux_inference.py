@@ -124,7 +124,7 @@ class FluxInference:
         self.face_neg_prompt = (
             "deformed face, distorted face, disfigured, low res, bad anatomy, cartoon, anime, painting, sketch, low quality, pixelated, jpeg artifacts, oversaturated"
         )
-        self.face_guidance_scale = 4
+        self.face_guidance_scale = 4.0
         self.face_expansion = 0
         self.face_detection_model = "mediapipe"
         self.save_face_debug = True
@@ -946,7 +946,7 @@ class FluxInference:
         width: int = 1024,
         height: int = 1024,
         num_inference_steps: int = 20,
-        guidance_scale: float = 7.0,
+        guidance_scale: float = 4.0,
         num_images_per_prompt: int = 1,
         seed: int = -1,
         output_filenames: Optional[List[str]] = None,
@@ -1162,7 +1162,7 @@ def main() -> None:
         width=generate_cfg.get("width", 1024),
         height=generate_cfg.get("height", 1024),
         num_inference_steps=generate_cfg.get("sample_steps", 20),
-        guidance_scale=generate_cfg.get("guidance_scale", 7.0),
+        guidance_scale=generate_cfg.get("guidance_scale", 4.0),
         num_images_per_prompt=generate_cfg.get("num_images", 1),
         seed=generate_cfg.get("seed", -1),
         output_ext=generate_cfg.get("ext", ".png"),

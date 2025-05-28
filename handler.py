@@ -897,7 +897,7 @@ def run_inference_job(config_data, temp_dir):
             width=generate_cfg.get("width", 1024),
             height=generate_cfg.get("height", 1024),
             num_inference_steps=generate_cfg.get("sample_steps", 20),
-            guidance_scale=generate_cfg.get("guidance_scale", 7.0),
+            guidance_scale=generate_cfg.get("guidance_scale", 4.0),
             num_images_per_prompt=generate_cfg.get("num_images", 1),
             seed=generate_cfg.get("seed", -1),
             output_ext=generate_cfg.get("ext", ".png"),
