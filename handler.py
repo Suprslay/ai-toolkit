@@ -17,6 +17,16 @@ import shutil
 from pathlib import Path
 from huggingface_hub import hf_hub_download
 
+# Import rembg for background removal
+try:
+    from rembg import remove, new_session
+    REMBG_AVAILABLE = True
+    print("rembg imported successfully - background removal enabled")
+except ImportError as e:
+    print(f"Warning: Could not import rembg: {e}")
+    print("Background removal will be disabled. Install rembg with: pip install rembg")
+    REMBG_AVAILABLE = False
+
 # Load the .env file if it exists
 load_dotenv()
 sys.path.insert(0, os.getcwd())
@@ -54,6 +64,67 @@ except ImportError as e:
 # Initialize S3 client globally
 s3_client = None
 
+# Initialize rembg session globally for reuse
+rembg_session = None
+
+def initialize_rembg():
+    """Initialize rembg session for background removal"""
+    global rembg_session
+    if not REMBG_AVAILABLE:
+        print_acc("rembg not available - background removal disabled")
+        return False
+    
+    try:
+        # Initialize with u2net model (good balance of speed and quality)
+        # You can change to 'u2netp' for faster processing or 'silueta' for better quality
+        rembg_session = new_session('u2net')
+        print_acc("rembg session initialized successfully with u2net model")
+        return True
+    except Exception as e:
+        print_acc(f"Warning: Could not initialize rembg session: {e}")
+        print_acc("Background removal will be disabled")
+        return False
+
+def remove_background(image):
+    """
+    Remove background from PIL Image using rembg
+    
+    Args:
+        image: PIL Image object
+        
+    Returns:
+        PIL Image object with background removed (RGBA format)
+    """
+    if not REMBG_AVAILABLE or rembg_session is None:
+        print_acc("Background removal not available - returning original image")
+        return image
+    
+    try:
+        # Convert PIL image to bytes
+        img_byte_arr = io.BytesIO()
+        # Save as PNG to preserve any existing alpha channel
+        image.save(img_byte_arr, format='PNG')
+        img_byte_arr.seek(0)
+        
+        # Remove background
+        print_acc("Removing background...")
+        output = remove(img_byte_arr.getvalue(), session=rembg_session)
+        
+        # Convert back to PIL Image
+        result_image = Image.open(io.BytesIO(output))
+        
+        # Ensure RGBA format for transparency
+        if result_image.mode != 'RGBA':
+            result_image = result_image.convert('RGBA')
+        
+        print_acc("Background removed successfully")
+        return result_image
+        
+    except Exception as e:
+        print_acc(f"Error removing background: {e}")
+        print_acc("Returning original image")
+        return image
+
 def initialize_s3_client():
     """Initialize S3 client with credentials from environment variables"""
     global s3_client
@@ -70,6 +141,65 @@ def initialize_s3_client():
         print_acc(f"Warning: Could not initialize S3 client: {e}")
         print_acc("S3 functionality will be disabled. Set AWS credentials to enable S3 support.")
         return False
+
+def handle_start_image_s3(config_data, temp_dir):
+    """
+    Handle start_image S3 paths by downloading them to local temp directory
+    
+    Args:
+        config_data: Configuration dictionary
+        temp_dir: Temporary directory for files
+    
+    Returns:
+        dict: Updated configuration with local start_image paths
+    """
+    updated_config = config_data.copy()
+    generate_cfg = updated_config.get("generate", {})
+    
+    start_image = generate_cfg.get("start_image")
+    
+    if start_image and isinstance(start_image, str) and start_image.startswith('s3://'):
+        try:
+            print_acc(f"Downloading start_image from S3: {start_image}")
+            
+            # Download the S3 image
+            image = download_from_s3(start_image)
+            
+            # Create a filename for the start image
+            # Extract filename from S3 path or create a default one
+            s3_filename = os.path.basename(start_image.rstrip('/'))
+            if not s3_filename or not any(s3_filename.lower().endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff', '.webp']):
+                s3_filename = "start_image.png"
+            
+            # Save to temp directory
+            local_start_image_path = os.path.join(temp_dir, s3_filename)
+            
+            # Convert to RGB if necessary and save
+            if image.mode == 'RGBA':
+                # Keep as PNG to preserve transparency
+                image.save(local_start_image_path, "PNG")
+            else:
+                if image.mode != 'RGB':
+                    image = image.convert('RGB')
+                # Save as original format or PNG
+                if s3_filename.lower().endswith('.png'):
+                    image.save(local_start_image_path, "PNG")
+                elif s3_filename.lower().endswith(('.jpg', '.jpeg')):
+                    image.save(local_start_image_path, "JPEG")
+                else:
+                    image.save(local_start_image_path, "PNG")
+            
+            # Update config with local path
+            generate_cfg["start_image"] = local_start_image_path
+            
+            print_acc(f"Downloaded start_image to: {local_start_image_path}")
+            
+        except Exception as e:
+            error_msg = f"Failed to download start_image from S3: {str(e)}"
+            print_acc(error_msg)
+            raise Exception(error_msg)
+    
+    return updated_config
 
 def parse_lora_path(path):
     """
@@ -234,13 +364,14 @@ def update_config_with_resolved_loras(config_data, cache_dir="./lora_cache"):
     
     return updated_config
 
-def download_s3_folder_to_dataset(bucket_name, folder_path=""):
+def download_s3_folder_to_dataset(bucket_name, folder_path="", remove_bg=True):
     """
     Download all files from S3 folder to datasets/input, preserving folder structure
     
     Args:
         bucket_name: S3 bucket name
         folder_path: Folder path within bucket (optional)
+        remove_bg: Whether to remove background from images
     
     Returns:
         str: Path to the dataset folder
@@ -264,6 +395,7 @@ def download_s3_folder_to_dataset(bucket_name, folder_path=""):
         page_iterator = paginator.paginate(Bucket=bucket_name, Prefix=folder_path)
         
         file_count = 0
+        processed_count = 0
         for page in page_iterator:
             if 'Contents' in page:
                 for obj in page['Contents']:
@@ -283,8 +415,39 @@ def download_s3_folder_to_dataset(bucket_name, folder_path=""):
                     print_acc(f"Downloading: {key} -> {filename}")
                     s3_client.download_file(bucket_name, key, local_path)
                     file_count += 1
+                    
+                    # Check if it's an image file and process background removal
+                    if remove_bg and is_image_file(filename):
+                        try:
+                            print_acc(f"Processing image for background removal: {filename}")
+                            image = Image.open(local_path)
+                            processed_image = remove_background(image)
+                            
+                            # Save as PNG to preserve transparency
+                            processed_path = os.path.splitext(local_path)[0] + '.png'
+                            processed_image.save(processed_path, "PNG")
+                            
+                            # Remove original if format changed
+                            if processed_path != local_path:
+                                os.remove(local_path)
+                                print_acc(f"Converted and processed: {filename} -> {os.path.basename(processed_path)}")
+                            else:
+                                print_acc(f"Processed: {filename}")
+                            
+                            processed_count += 1
+                            
+                        except Exception as e:
+                            print_acc(f"Error processing image {filename}: {e}")
+                            print_acc(f"Keeping original image: {filename}")
         
-        print_acc(f"Successfully downloaded {file_count} files to {dataset_path}")
+        if remove_bg and REMBG_AVAILABLE:
+            print_acc(f"Successfully downloaded {file_count} files to {dataset_path}")
+            print_acc(f"Background removed from {processed_count} images")
+        else:
+            print_acc(f"Successfully downloaded {file_count} files to {dataset_path}")
+            if remove_bg and not REMBG_AVAILABLE:
+                print_acc("Background removal was requested but rembg is not available")
+        
         return dataset_path
         
     except ClientError as e:
@@ -297,6 +460,11 @@ def download_s3_folder_to_dataset(bucket_name, folder_path=""):
             raise Exception(f"S3 error: {e}")
     except Exception as e:
         raise Exception(f"Failed to download from S3: {str(e)}")
+
+def is_image_file(filename):
+    """Check if filename is an image file based on extension"""
+    image_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tiff', '.webp'}
+    return os.path.splitext(filename.lower())[1] in image_extensions
 
 def download_from_s3(s3_url_or_object):
     """
@@ -356,17 +524,18 @@ def download_from_s3(s3_url_or_object):
     except Exception as e:
         raise Exception(f"Failed to download from S3: {str(e)}")
 
-def save_images_to_dataset(images_input):
+def save_images_to_dataset(images_input, remove_bg=True):
     """
-    Save files to datasets/input folder
+    Save files to datasets/input folder with optional background removal
     For S3 folders: Download everything as-is
-    For individual files: Keep original behavior
+    For individual files: Keep original behavior but add background removal
     
     Args:
         images_input: Can be:
             - List of image data (base64 strings, URLs, S3 URLs, or objects)
             - S3 folder object: {"s3_folder": {"bucket": "name", "folder": "path"}}
             - S3 folder URL: "s3://bucket-name/folder-path/"
+        remove_bg: Whether to remove background from images (default: True)
     
     Returns:
         str: Path to the created dataset folder
@@ -384,7 +553,7 @@ def save_images_to_dataset(images_input):
         if not bucket_name:
             raise Exception("S3 folder object must have 'bucket' field")
         
-        return download_s3_folder_to_dataset(bucket_name, folder_path)
+        return download_s3_folder_to_dataset(bucket_name, folder_path, remove_bg)
         
     elif isinstance(images_input, str) and images_input.startswith('s3://') and images_input.endswith('/'):
         # S3 folder URL format: "s3://bucket-name/folder-path/"
@@ -392,12 +561,13 @@ def save_images_to_dataset(images_input):
         bucket_name = url_parts[0]
         folder_path = url_parts[1] if len(url_parts) > 1 else ''
         
-        return download_s3_folder_to_dataset(bucket_name, folder_path)
+        return download_s3_folder_to_dataset(bucket_name, folder_path, remove_bg)
         
     elif isinstance(images_input, list):
-        # Original behavior for individual files - convert to RGB and save as sequential PNGs
+        # Original behavior for individual files - process each image
         print_acc(f"Processing {len(images_input)} individual images")
         
+        processed_count = 0
         for i, image_data in enumerate(images_input, 1):
             try:
                 image = None
@@ -435,31 +605,50 @@ def save_images_to_dataset(images_input):
                 else:
                     raise ValueError(f"Unsupported image format for image {i}")
                 
-                # Convert to RGB if necessary and save as PNG (original behavior)
-                if image.mode != 'RGB':
-                    image = image.convert('RGB')
-                
-                image_path = os.path.join(dataset_path, f"{i}.png")
-                image.save(image_path, "PNG")
-                print_acc(f"Saved image {i} to {image_path}")
+                # Apply background removal if requested
+                if remove_bg:
+                    print_acc(f"Processing image {i} for background removal...")
+                    image = remove_background(image)
+                    processed_count += 1
+                    
+                    # Save as PNG to preserve transparency
+                    image_path = os.path.join(dataset_path, f"{i}.png")
+                    image.save(image_path, "PNG")
+                    print_acc(f"Saved processed image {i} to {image_path}")
+                else:
+                    # Convert to RGB if necessary and save as PNG (original behavior)
+                    if image.mode != 'RGB':
+                        image = image.convert('RGB')
+                    
+                    image_path = os.path.join(dataset_path, f"{i}.png")
+                    image.save(image_path, "PNG")
+                    print_acc(f"Saved image {i} to {image_path}")
                 
             except Exception as e:
                 error_msg = f"Error processing image {i}: {str(e)}"
                 print_acc(error_msg)
                 raise Exception(error_msg)
+                
+        if remove_bg and REMBG_AVAILABLE:
+            print_acc(f"Successfully processed {len(images_input)} images to {dataset_path}")
+            print_acc(f"Background removed from {processed_count} images")
+        else:
+            print_acc(f"Successfully processed {len(images_input)} images to {dataset_path}")
+            if remove_bg and not REMBG_AVAILABLE:
+                print_acc("Background removal was requested but rembg is not available")
     else:
         raise Exception("Invalid images input format")
     
-    print_acc(f"Successfully processed files to {dataset_path}")
     return dataset_path
 
-def save_images_for_inference(images_input, temp_dir: str) -> List[str]:
+def save_images_for_inference(images_input, temp_dir: str, remove_bg=False) -> List[str]:
     """
     Save images for inference and return list of file paths.
     
     Args:
         images_input: Same format as save_images_to_dataset
         temp_dir: Temporary directory to save images
+        remove_bg: Whether to remove background (default: False for inference)
     
     Returns:
         List of file paths to saved images
@@ -522,14 +711,31 @@ def save_images_for_inference(images_input, temp_dir: str) -> List[str]:
     
     # Save images and return paths
     image_paths = []
+    processed_count = 0
     for i, image in enumerate(images, 1):
-        if image.mode != 'RGB':
-            image = image.convert('RGB')
+        # Apply background removal if requested
+        if remove_bg:
+            print_acc(f"Processing reference image {i} for background removal...")
+            image = remove_background(image)
+            processed_count += 1
+            
+            # Save as PNG to preserve transparency
+            image_path = os.path.join(temp_dir, f"ref_image_{i}.png")
+            image.save(image_path, "PNG")
+            print_acc(f"Saved processed reference image {i} to {image_path}")
+        else:
+            # Convert to RGB if necessary
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+            
+            image_path = os.path.join(temp_dir, f"ref_image_{i}.png")
+            image.save(image_path, "PNG")
+            print_acc(f"Saved reference image {i} to {image_path}")
         
-        image_path = os.path.join(temp_dir, f"ref_image_{i}.png")
-        image.save(image_path, "PNG")
         image_paths.append(image_path)
-        print_acc(f"Saved reference image {i} to {image_path}")
+    
+    if remove_bg and REMBG_AVAILABLE and processed_count > 0:
+        print_acc(f"Background removed from {processed_count} reference images")
     
     return image_paths
 
@@ -823,6 +1029,24 @@ def run_inference_job(config_data, temp_dir):
         model_cfg = config_data.get("model", {})
         generate_cfg = config_data.get("generate", {})
         ip_adapter_cfg = config_data.get("ip_adapter", {})
+
+        skip_generation = generate_cfg.get("skip_generation", False)
+        start_image = generate_cfg.get("start_image")
+
+        if skip_generation and not start_image:
+            raise SystemExit("✖ skip_generation=true requires start_image to be specified")
+    
+        if skip_generation and start_image and not os.path.exists(start_image):
+            raise SystemExit(f"✖ Start image not found: {start_image}")
+    
+        # Prompts ---------------------------------------------------------------
+        prompts = generate_cfg.get("prompts", [])
+        if not prompts and not skip_generation:
+            raise SystemExit("✖ No prompts provided in config file")
+    
+        # For direct inpainting, prompts are optional (used as face prompt override)
+        if skip_generation and not prompts:
+            prompts = [""]
         
         # Handle IP-Adapter reference images if provided
         ip_adapter_image_paths = []
@@ -830,7 +1054,9 @@ def run_inference_job(config_data, temp_dir):
             ref_images = ip_adapter_cfg["reference_images"]
             if ref_images:
                 print_acc("Processing IP-Adapter reference images...")
-                ip_adapter_image_paths = save_images_for_inference(ref_images, temp_dir)
+                # For inference reference images, we typically don't remove background
+                # but you can change this by setting remove_bg=True
+                ip_adapter_image_paths = save_images_for_inference(ref_images, temp_dir, remove_bg=False)
                 # Update config with local paths
                 ip_adapter_cfg["reference_images"] = ip_adapter_image_paths
         
@@ -877,33 +1103,41 @@ def run_inference_job(config_data, temp_dir):
             config=config_data,
         )
         
-        # Load model with resolved inference LoRAs
-        flux.load_model(
-            inference_lora_paths=model_cfg.get("inference_lora_paths", []),
-            inference_lora_strengths=model_cfg.get("inference_lora_strengths", []),
-        )
         
-        # Get prompts
-        prompts = generate_cfg.get("prompts", [])
-        if not prompts:
-            raise Exception("No prompts provided in configuration")
-        
-        print_acc(f"Generating images for {len(prompts)} prompts...")
-        
-        # Generate images
-        generated_images = flux.generate_images(
-            prompts=prompts,
-            negative_prompt=generate_cfg.get("negative_prompt", "ugly, bad anatomy, blurry"),
-            width=generate_cfg.get("width", 1024),
-            height=generate_cfg.get("height", 1024),
-            num_inference_steps=generate_cfg.get("sample_steps", 20),
-            guidance_scale=generate_cfg.get("guidance_scale", 4.0),
-            num_images_per_prompt=generate_cfg.get("num_images", 1),
-            seed=generate_cfg.get("seed", -1),
-            output_ext=generate_cfg.get("ext", ".png"),
-            ip_adapter_images=generate_cfg.get("ip_adapter_images"),
-            ip_adapter_scales=generate_cfg.get("ip_adapter_scales"),
-        )
+        try:
+            # Check if we need to enable inpainting for direct mode
+            if skip_generation and not (generate_cfg.get("face_inpainting", False) or generate_cfg.get("upper_body_inpainting", False)):
+                print("[Main] WARNING: Direct inpainting mode but no inpainting options enabled!")
+                print("[Main] Consider enabling face_inpainting or upper_body_inpainting in config")
+
+             # Load weights ----------------------------------------------------------
+            flux.load_model(
+                inference_lora_paths=model_cfg.get("inference_lora_paths", []),
+                inference_lora_strengths=model_cfg.get("inference_lora_strengths", []),
+                skip_generation=skip_generation,
+            )
+
+            # Run generation or direct inpainting -----------------------------------
+            flux.generate_images(
+                prompts=prompts,
+                negative_prompt=generate_cfg.get("negative_prompt", "ugly, bad anatomy, blurry"),
+                width=generate_cfg.get("width", 1024),
+                height=generate_cfg.get("height", 1024),
+                num_inference_steps=generate_cfg.get("sample_steps", 20),  
+                guidance_scale=generate_cfg.get("guidance_scale", 4.0),
+                num_images_per_prompt=generate_cfg.get("num_images", 1),
+                seed=generate_cfg.get("seed", -1),
+                output_ext=generate_cfg.get("ext", ".png"),
+                # Per-generation IP-Adapter control
+                ip_adapter_images=generate_cfg.get("ip_adapter_images"),
+                ip_adapter_scales=generate_cfg.get("ip_adapter_scales"),
+                # NEW: Direct inpainting parameters
+                skip_generation=skip_generation,
+                start_image=start_image,
+            )
+        finally:
+            # Always cleanup adapters
+            flux.cleanup_adapters()
         
         # Find generated image files
         output_files = []
@@ -985,6 +1219,9 @@ accelerator = get_accelerator()
 # Initialize S3 client
 s3_init_success = initialize_s3_client()
 
+# Initialize rembg for background removal
+rembg_init_success = initialize_rembg()
+
 # Pre-load any models, tokenizers, or heavy resources that will be reused
 # This happens once when the container starts, not on each request
 def initialize_models():
@@ -1014,7 +1251,8 @@ def handler(job):
         "config_files": ["config/train_flux.yaml"],
         "recover": false,
         "name": "my_model_v1",
-        "log_file": "training.log"
+        "log_file": "training.log",
+        "remove_background": true  # Optional, defaults to true for training
     }
     
     INFERENCE (type: "inference"):
@@ -1096,7 +1334,7 @@ def handler(job):
 
 def handle_training_job(job_input):
     """
-    Handle training job (original functionality)
+    Handle training job (original functionality with background removal)
     
     Args:
         job_input: Job input dictionary
@@ -1120,12 +1358,22 @@ def handle_training_job(job_input):
         recover = job_input.get("recover", False)
         name_tag = job_input.get("name", None)
         log_file = job_input.get("log_file", None)
+        remove_bg = job_input.get("remove_background", False)  # Default to True for training
         
         # Log the name tag being used
         if name_tag:
             print_acc(f"Using name tag for replacement: '{name_tag}'")
         else:
             print_acc("No name tag provided - [name] placeholders will not be replaced")
+        
+        # Log background removal setting
+        if remove_bg:
+            if REMBG_AVAILABLE:
+                print_acc("Background removal enabled")
+            else:
+                print_acc("Background removal requested but rembg not available")
+        else:
+            print_acc("Background removal disabled")
         
         # Validate config_files is a list
         if isinstance(config_files, str):
@@ -1158,9 +1406,9 @@ def handle_training_job(job_input):
         else:
             print_acc("S3 support disabled - set AWS credentials to enable")
         
-        # Save images to datasets/input folder
+        # Save images to datasets/input folder with background removal
         try:
-            dataset_path = save_images_to_dataset(images_input)
+            dataset_path = save_images_to_dataset(images_input, remove_bg=remove_bg)
         except Exception as e:
             return {
                 "error": f"Failed to save images: {str(e)}",
@@ -1187,6 +1435,8 @@ def handle_training_job(job_input):
         file_count = len([f for f in os.listdir(dataset_path) if os.path.isfile(os.path.join(dataset_path, f))])
         result["files_processed"] = file_count
         result["s3_enabled"] = s3_init_success
+        result["rembg_enabled"] = rembg_init_success
+        result["background_removal_applied"] = remove_bg and rembg_init_success
         result["name_tag_used"] = name_tag
         
         return result
@@ -1233,6 +1483,22 @@ def handle_inference_job(job_input):
         # Create temporary directory for this job
         temp_dir = tempfile.mkdtemp(prefix="flux_inference_")
         print_acc(f"Created temporary directory: {temp_dir}")
+
+        # Handle S3 start_image download
+        generate_cfg = config_data.get("generate", {})
+        if generate_cfg.get("start_image"):
+            start_image = generate_cfg["start_image"]
+            if isinstance(start_image, str) and start_image.startswith('s3://'):
+                if not s3_init_success:
+                    return {
+                        "error": "S3 credentials required for start_image but S3 client not initialized",
+                        "success": False,
+                        "job_type": "inference"
+                    }
+        
+                # Download start_image from S3 and update config
+                print_acc("Processing S3 start_image...")
+                config_data = handle_start_image_s3(config_data, temp_dir)
         
         # Validate required config sections
         if "generate" not in config_data:
@@ -1283,6 +1549,7 @@ def handle_inference_job(job_input):
         result = run_inference_job(config_data, temp_dir)
         result["job_type"] = "inference"
         result["s3_enabled"] = s3_init_success
+        result["rembg_enabled"] = rembg_init_success
         
         return result
         

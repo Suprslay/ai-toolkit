@@ -14,7 +14,7 @@ config:
       network:
         type: "lora"
         linear: 16
-        linear_alpha: 16
+        linear_alpha: 32
       save:
         dtype: float16 # precision to save
         save_every: 1000 # save every this many steps
@@ -37,7 +37,7 @@ config:
           resolution: [ 512, 768, 1024 ]  # flux enjoys multiple resolutions
       train:
         batch_size: 1
-        steps: 600  # total number of steps to train 500 - 4000 is a good range
+        steps: 800  # total number of steps to train 500 - 4000 is a good range
         gradient_accumulation_steps: 2
         train_unet: true
         train_text_encoder: false  # probably won't work with flux
@@ -54,7 +54,7 @@ config:
 
         # ema will smooth out learning, but could slow it down. Recommended to leave on.
         ema_config:
-          use_ema: false
+          use_ema: true
           ema_decay: 0.99
 
         # will probably need this if gpu supports it for flux, other dtypes may not work correctly
