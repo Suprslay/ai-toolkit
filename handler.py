@@ -1160,7 +1160,6 @@ def run_inference_job(config_data, temp_dir):
                 
                 return {
                     "success": True,
-                    "images_generated": len(generated_images),
                     "output_type": "s3",
                     "output_location": s3_output_dir,
                     "s3_urls": s3_urls,
@@ -1179,7 +1178,6 @@ def run_inference_job(config_data, temp_dir):
                 
                 return {
                     "success": True,
-                    "images_generated": len(generated_images),
                     "output_type": "base64_fallback",
                     "s3_upload_error": str(e),
                     "images": encoded_images,
@@ -1196,7 +1194,6 @@ def run_inference_job(config_data, temp_dir):
             
             return {
                 "success": True,
-                "images_generated": len(generated_images),
                 "output_type": "base64",
                 "images": encoded_images,
                 "filenames": [os.path.basename(f) for f in output_files],
