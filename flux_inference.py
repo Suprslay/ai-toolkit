@@ -739,8 +739,8 @@ class FluxInference:
     
         # Calculate hair extension - typically hair adds 20-40% to head height
         hair_extension = max(
-            int(head_size_estimate * 0.35),  # 35% of head size for hair
-            int(head_height_estimate * 0.4),  # 40% of face height for hair
+            int(head_size_estimate * 0.8),  # 35% of head size for hair
+            int(head_height_estimate * 0.8),  # 40% of face height for hair
             30  # Minimum 30 pixels for hair
         )
     
@@ -769,7 +769,7 @@ class FluxInference:
         head_right = max(head_xs)
     
         # Extend horizontally to include hair (hair can extend beyond face width)
-        hair_side_extension = int(head_width_estimate * 0.25)  # 25% extension each side
+        hair_side_extension = int(head_width_estimate * 0.40)  # 25% extension each side
     
         # Use the wider of shoulder-based or head-based calculations
         shoulder_based_width = int(shoulder_width * 1.3)  # 30% wider than shoulders
@@ -854,7 +854,7 @@ class FluxInference:
                 if upper_body_region:
                     print(f"[Direct] Face+neck region detected, switching to upper body adapters …")
                     self._switch_adapters(self.inpaint_pipeline, "upper_body")
-                    processed_img = self._inpaint_upper_body(processed_img, upper_body_region)
+                    processed_img = self._inpaint_upper_body(processed_img, upper_body_region, seed)
                 else:
                     print(f"[Direct] No face+neck region detected, skipping upper body inpainting")
 
@@ -1015,7 +1015,7 @@ class FluxInference:
             traceback.print_exc()
             return img
 
-    def _inpaint_upper_body(self, img: Image.Image, region: Tuple[int, int, int, int]) -> Image.Image:
+    def _inpaint_upper_body(self, img: Image.Image, region: Tuple[int, int, int, int],  seed: int) -> Image.Image:
         """Upper body inpainting using shared pipeline with adapter switching."""
         if not self.inpaint_pipeline:
             print("[Upper Body] No inpainting pipeline available")
@@ -1084,7 +1084,7 @@ class FluxInference:
                 num_inference_steps=35,
                 guidance_scale=self.upper_body_guidance_scale,
                 strength=0.8,
-                generator=torch.Generator(device=self.device).manual_seed(42),
+                generator=torch.Generator(device=self.device).manual_seed(seed),
             )
             
             inpainted_region = result.images[0]
@@ -1279,7 +1279,7 @@ class FluxInference:
                             self._switch_adapters(self.inpaint_pipeline, "upper_body")
                         else:
                             print(f"      ↳ No upper body-specific adapters, using current adapters")
-                        processed_img = self._inpaint_upper_body(processed_img, upper_body_region)
+                        processed_img = self._inpaint_upper_body(processed_img, upper_body_region, use_seed)
                     else:
                         print(f"      ↳ No face+neck region detected, skipping upper body inpainting")
                 
