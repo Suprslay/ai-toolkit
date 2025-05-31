@@ -668,67 +668,138 @@ class FluxInference:
         return boxes
 
     def detect_upper_body_region(self, img: Image.Image) -> Optional[Tuple[int, int, int, int]]:
-        """Detect the face + neck region using pose detection."""
+        """Detect the complete head + neck region including hair using pose detection."""
         if not self.pose_detector:
             self._setup_pose_detection()
-        
+    
         img_rgb = np.array(img)
         height, width, _ = img_rgb.shape
-        
+    
         results = self.pose_detector.process(img_rgb)
-        
+    
         if not results.pose_landmarks:
             return None
-        
+    
         landmarks = results.pose_landmarks.landmark
-        
+    
         LEFT_SHOULDER = 11
         RIGHT_SHOULDER = 12
         NOSE = 0
         LEFT_EYE = 1
         RIGHT_EYE = 2
-        
+        LEFT_EYE_INNER = 1
+        LEFT_EYE_OUTER = 3
+        RIGHT_EYE_INNER = 4
+        RIGHT_EYE_OUTER = 6
+        LEFT_EAR = 7
+        RIGHT_EAR = 8
+    
         left_shoulder = landmarks[LEFT_SHOULDER]
         right_shoulder = landmarks[RIGHT_SHOULDER]
-        
+    
         if (left_shoulder.visibility < 0.3 and right_shoulder.visibility < 0.3):
             return None
-        
-        # Calculate face + neck region
+    
+        # Calculate shoulder positions
         left_shoulder_x = int(left_shoulder.x * width)
         left_shoulder_y = int(left_shoulder.y * height)
         right_shoulder_x = int(right_shoulder.x * width)
         right_shoulder_y = int(right_shoulder.y * height)
-        
-        face_landmarks = [landmarks[NOSE], landmarks[LEFT_EYE], landmarks[RIGHT_EYE]]
-        face_points = [(int(lm.x * width), int(lm.y * height)) for lm in face_landmarks if lm.visibility > 0.3]
-        
-        if not face_points:
+    
+        # Get all visible head landmarks for better head boundary detection
+        head_landmarks = [
+            landmarks[NOSE], landmarks[LEFT_EYE], landmarks[RIGHT_EYE],
+            landmarks[LEFT_EYE_OUTER], landmarks[RIGHT_EYE_OUTER],
+            landmarks[LEFT_EAR], landmarks[RIGHT_EAR]
+        ]
+    
+        # Filter visible landmarks
+        visible_head_points = [
+            (int(lm.x * width), int(lm.y * height)) 
+            for lm in head_landmarks 
+            if lm.visibility > 0.3
+        ]
+    
+        if not visible_head_points:
             return None
-            
-        face_xs = [p[0] for p in face_points]
-        face_ys = [p[1] for p in face_points]
-        face_top_y = min(face_ys)
-        
-        face_height_estimate = max(left_shoulder_y, right_shoulder_y) - face_top_y
-        top_padding = int(face_height_estimate * 0.3)
-        region_top_y = max(0, face_top_y - top_padding)
-        
+    
+        # Find head boundaries
+        head_xs = [p[0] for p in visible_head_points]
+        head_ys = [p[1] for p in visible_head_points]
+    
+        # Get the lowest point of visible head features (usually nose or mouth area)
+        head_bottom_y = max(head_ys)
+    
+        # Estimate head size and calculate top boundary including hair
+        head_width_estimate = max(head_xs) - min(head_xs)
+        head_height_estimate = max(left_shoulder_y, right_shoulder_y) - min(head_ys)
+    
+        # Use the larger of width or height-based estimates for head size
+        head_size_estimate = max(head_width_estimate, head_height_estimate)
+    
+        # Calculate hair extension - typically hair adds 20-40% to head height
+        hair_extension = max(
+            int(head_size_estimate * 0.35),  # 35% of head size for hair
+            int(head_height_estimate * 0.4),  # 40% of face height for hair
+            30  # Minimum 30 pixels for hair
+        )
+    
+        # Calculate top boundary including hair
+        visible_head_top_y = min(head_ys)
+        region_top_y = max(0, visible_head_top_y - hair_extension)
+    
+        print(f"[Upper Body] Head size estimate: {head_size_estimate}px")
+        print(f"[Upper Body] Hair extension: {hair_extension}px")
+        print(f"[Upper Body] Visible head top: {visible_head_top_y}px -> With hair: {region_top_y}px")
+    
+        # Calculate bottom boundary (neck area)
         neck_bottom_y = max(left_shoulder_y, right_shoulder_y)
+    
+        # Add small padding below shoulders to ensure full neck coverage
+        neck_padding = int(head_size_estimate * 0.1)
+        region_bottom_y = min(height, neck_bottom_y + neck_padding)
+    
+        # Calculate horizontal boundaries
         shoulder_width = abs(right_shoulder_x - left_shoulder_x)
         center_x = (left_shoulder_x + right_shoulder_x) // 2
-        
-        extension_factor = 0.3
-        region_width = int(shoulder_width * (1 + 2 * extension_factor))
-        
+    
+        # Ensure region is wide enough to capture full head including hair sides
+        head_center_x = sum(head_xs) // len(head_xs)
+        head_left = min(head_xs)
+        head_right = max(head_xs)
+    
+        # Extend horizontally to include hair (hair can extend beyond face width)
+        hair_side_extension = int(head_width_estimate * 0.25)  # 25% extension each side
+    
+        # Use the wider of shoulder-based or head-based calculations
+        shoulder_based_width = int(shoulder_width * 1.3)  # 30% wider than shoulders
+        head_based_width = (head_right - head_left) + (2 * hair_side_extension)
+    
+        region_width = max(shoulder_based_width, head_based_width)
+    
+        # Center the region
         x = max(0, center_x - region_width // 2)
-        y = region_top_y
+    
+        # Ensure region fits within image bounds
         w = min(width - x, region_width)
-        h = min(height - y, neck_bottom_y - region_top_y)
-        
-        if w * h < width * height * 0.01:
+        h = region_bottom_y - region_top_y
+        y = region_top_y
+    
+        # Final boundary adjustments
+        if x + w > width:
+            w = width - x
+        if y + h > height:
+            h = height - y
+    
+        # Validate minimum region size
+        min_region_area = width * height * 0.02  # At least 2% of image
+        if w * h < min_region_area:
+            print(f"[Upper Body] Region too small: {w}x{h} = {w*h}px < {min_region_area}px")
             return None
-        
+    
+        print(f"[Upper Body] Final region: x={x}, y={y}, w={w}, h={h}")
+        print(f"[Upper Body] Region covers: top={y}px (with hair) to bottom={y+h}px (with neck)")
+    
         return (x, y, w, h)
 
     # ------------------------------ NEW: Direct inpainting methods -------- #
@@ -740,6 +811,7 @@ class FluxInference:
         output_ext: str = ".png",
         face_prompt_override: Optional[str] = None,
         upper_body_prompt_override: Optional[str] = None,
+        seed: int = 42
     ) -> Image.Image:
         """Process an existing image directly with face/upper body inpainting."""
         if not self.is_loaded:
@@ -793,7 +865,7 @@ class FluxInference:
                     print(f"[Direct] {len(faces)} face(s) found, switching to face adapters …")
                     self._switch_adapters(self.inpaint_pipeline, "face")
                     for b in faces:
-                        processed_img = self._inpaint_face(processed_img, b)
+                        processed_img = self._inpaint_face(processed_img, b, seed)
                 else:
                     print(f"[Direct] No faces found, skipping face inpainting")
 
@@ -818,7 +890,7 @@ class FluxInference:
 
     # ------------------------------ inpainting ---------------------------- #
 
-    def _inpaint_face(self, img: Image.Image, box: Tuple[int, int, int, int]) -> Image.Image:
+    def _inpaint_face(self, img: Image.Image, box: Tuple[int, int, int, int], seed: int) -> Image.Image:
         """Face inpainting using shared pipeline with adapter switching."""
         if not self.inpaint_pipeline:
             print("[Face] No inpainting pipeline available")
@@ -888,8 +960,8 @@ class FluxInference:
                 mask_image=mask_pil,
                 num_inference_steps=32,
                 guidance_scale=self.face_guidance_scale,
-                strength=0.75,
-                generator=torch.Generator(device=self.device).manual_seed(42),
+                strength=0.9,
+                generator=torch.Generator(device=self.device).manual_seed(seed),
             )
             
             inpainted_face = result.images[0]
@@ -1089,7 +1161,7 @@ class FluxInference:
         """Generate images with memory-optimized adapter management or process existing images directly."""
         if not self.is_loaded:
             self.load_model(skip_generation=skip_generation)
-
+        use_seed = random.randint(0, 2**32 - 1) if seed < 0 else seed
         # NEW: Direct inpainting mode
         if skip_generation and start_image:
             print(f"[Gen] DIRECT INPAINTING MODE: Processing existing image {start_image}")
@@ -1103,6 +1175,7 @@ class FluxInference:
                 output_ext=output_ext,
                 # Use first prompt as face prompt override if provided
                 face_prompt_override=prompts[0] if prompts else None,
+                seed=use_seed
             )
             
             print("[Gen] Direct inpainting completed ✓")
@@ -1142,7 +1215,6 @@ class FluxInference:
 
         all_imgs: List[Image.Image] = []
         for idx, prompt in enumerate(prompts):
-            use_seed = random.randint(0, 2**32 - 1) if seed < 0 else seed
             print(f"[Gen] Prompt {idx+1}/{len(prompts)}  seed={use_seed}")
             if generation_ip_images:
                 print(f"      → IP-Adapter: {len(generation_ip_images)} images, scales: {generation_ip_scales}")
@@ -1222,7 +1294,7 @@ class FluxInference:
                         else:
                             print(f"      ↳ No face-specific adapters, using current adapters")
                         for b in faces:
-                            processed_img = self._inpaint_face(processed_img, b)
+                            processed_img = self._inpaint_face(processed_img, b, use_seed)
                     else:
                         print(f"      ↳ No faces found, skipping face inpainting")
                 
